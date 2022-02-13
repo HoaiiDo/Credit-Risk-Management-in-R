@@ -1,0 +1,495 @@
+---
+title: "Credit Risk Management_coarsing_int_rate"
+author: "Hoai Do"
+date: "2/11/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+**The expected loss EL** a bank will incur is composed of three elements (multiplication of three)
+1. **Probability of default(PD)**:The probability that the borrower will fail to make a full repayment of the loan.
+2. **Exposure at default (EAD)**: The exposure at default, or EAD, which is the expected value of the loan at the time of default. You can also look at this as the amount of the loan that still needs to be repaid at the time of default.
+3. **Loss given default (LGD)**: The amount of the loss if there is a default, expressed as a percentage of the EAD.
+
+```{r}
+library(gmodels)
+library(tidyverse)
+data1 <- readRDS("loan_data_ch1.rds")
+data2 <- readRDS("loan_data_ch2.rds")
+```
+
+I. Exploring the credit data
+```{r}
+# View the structure of data1
+str(data1)
+# Load the gmodels package 
+library(gmodels)
+# Call CrossTable() on loan_status
+CrossTable(data1$loan_status)   # 0 and 1 mean no default or having default, respectively
+# Call CrossTable() on grade and loan_status
+CrossTable(data1$grade, data1$loan_status,
+prop.c = FALSE,   # no need for th inclusion of column proportions, 
+prop.t = FALSE,   # table proportion and chi-square contributions
+prop.chisq = FALSE)
+```
+Grade A indicates the highest class of creditworthiness and G the lowest
+
+Corralation matrix with heatmap for the numeric variable
+```{r}
+library(gplots)
+colfunc <- colorRampPalette(c("red", "white", "green"))
+correlationheat <- heatmap.2(cor(Filter(is.numeric, data1), use = "complete.obs"), Rowv = FALSE, Colv = FALSE,
+          dendrogram = "none", lwid=c(0.1,4), lhei=c(0.1,4), col = colfunc(15),
+          cellnote = round(cor(Filter(is.numeric, data1), use = "complete.obs"),2),
+          notecol = "black", key = FALSE, trace = 'none', margins = c(10,10))
+```
+
+I.a. Histograms and outliers
+
+```{r}
+hist(data1$int_rate,
+     main = "Histogram of interest rate",
+     xlab = "Interst Rate")
+```
+```{r}
+n_breaks <- sqrt(nrow(data1)) # n_breaks = 170.5638
+his_income <- hist(data1$annual_inc, breaks = n_breaks,
+     main = "Histogram of annual income",
+     xlab = "Annual Income")
+```
+
+We could observe an outlier with 6 million dollars income. Could use the rules like: `Q1-1.5*IQR` or `Q3=1.5*IQR`
+```{r}
+plot(data1$annual_inc, ylab = "Annual Income")
+```
+
+In assumption of financial expert, we assume that income annual bigger than 3 million is outliers for this dataset
+```{r}
+# Find outlier
+index_outlier_expert <- which(data1$annual_inc > 3000000)
+#  Remove outlier from dataset
+data1_expert <- data1[-index_outlier_expert,]
+```
+
+Or we could use the rule of `Q3 +1.5*IQR`
+```{r}
+# Calculate Q3 + 1.5*IQR
+outlier_cutoff <- quantile(data1$annual_inc, 0.75) + 1.5 * IQR(data1$annual_inc)
+# Identify outliers
+index_outlier_ROT <- which(data1$annual_inc > outlier_cutoff)
+# Remove outliers
+data1_ROT <- data1[-index_outlier_ROT,]
+```
+```{r}
+expert_breaks <- sqrt(nrow(data1_expert))
+his_income_expert <- hist(data1_expert$annual_inc, breaks = expert_breaks,
+     main = "Histogram of annual income with Advice from Expert",
+     xlab = "Annual Income")
+
+Q3rule_breaks <- sqrt(nrow(data1_ROT))
+his_income_Q3rule <- hist(data1_ROT$annual_inc, breaks = Q3rule_breaks,
+     main = "Histogram of annual income with Q3 rule",
+     xlab = "Annual Income")
+par(mfrow = c(2,1))
+```
+
+EDA on `loan_amnt`
+```{r}
+# Create histogram of loan_amnt: hist_1
+hist_1 <- hist(data1_ROT$loan_amnt)
+# Print locations of the breaks in hist_1
+hist_1$breaks
+# Change number of breaks and add labels: hist_2
+hist_2 <- hist(data1_ROT$loan_amnt, breaks = 200, xlab = "Loan amount", 
+               main = "Histogram of the loan amount")
+```
+
+EDA on `age`
+```{r}
+# Plot the age variable
+plot(data1_ROT$age, ylab = "Age")
+```
+
+The client with annual income higher than 6 million is also 144 years old, so we eliminate the observation of that client out of our dataset
+```{r}
+# Save the outlier's index to index_highage
+index_highage <- which(data1_ROT$age > 140)
+# Create data set new_data with outlier deleted
+new_data <- data1_ROT[-index_highage, ]
+# Make bivariate scatterplot of age and annual income
+plot(data1_ROT$age, data1_ROT$annual_inc, xlab = "Age", ylab = "Annual Income")
+```
+
+I.b. Missing data and coarse classification
+```{r}
+summary(data1_ROT)
+```
+
+Keeping misisng data for `emp_length` and `int_rate` we are goona use coarse classification for this variables.
+Since the missing input is important for this type of variable. Coarse classification requires us to bin our responses into groups that contain ranges of values. We can use this binning technique to place all NAs in their own bin.
+```{r}
+# Make the necessary replacements in the coarse classification example below 
+data1_ROT$emp_cat <- rep(NA, length(data1_ROT$emp_length))
+
+data1_ROT$emp_cat[which(data1_ROT$emp_length <= 15)] <- "0-15"
+data1_ROT$emp_cat[which(data1_ROT$emp_length > 15 & data1_ROT$emp_length <= 30)] <- "15-30"
+data1_ROT$emp_cat[which(data1_ROT$emp_length > 30 & data1_ROT$emp_length <= 45)] <- "30-45"
+data1_ROT$emp_cat[which(data1_ROT$emp_length > 45)] <- "45+"
+data1_ROT$emp_cat[which(is.na(data1_ROT$emp_length))] <- "Missing"
+
+data1_ROT$emp_cat <- as.factor(data1_ROT$emp_cat)
+
+data1_ROT$emp_length <- NULL
+# Look at your new variable using plot()
+plot(data1_ROT$emp_cat)
+```
+
+```{r}
+# Make the necessary replacements in the coarse classification example below 
+data1_ROT$int_cat <- rep(NA, length(data1_ROT$int_rate))
+
+data1_ROT$int_cat[which(data1_ROT$int_rate <= 8)] <- "0-8"
+data1_ROT$int_cat[which(data1_ROT$int_rate > 8 & data1_ROT$int_rate <= 11)] <- "8-11"
+data1_ROT$int_cat[which(data1_ROT$int_rate > 11 & data1_ROT$int_rate <= 13.5)] <- "11-13.5"
+data1_ROT$int_cat[which(data1_ROT$int_rate > 13.5)] <- "13.5+"
+data1_ROT$int_cat[which(is.na(data1_ROT$int_rate))] <- "Missing"
+
+data1_ROT$int_cat <- as.factor(data1_ROT$int_cat)
+
+data1_ROT$int_rate <- NULL
+# Look at your new variable using plot()
+plot(data1_ROT$int_cat)
+```
+
+```{r}
+# Set seed of 567
+set.seed(567)
+# Store row numbers for training set: index_train
+index_train <- sample(rownames(data1_ROT),
+                      nrow(data1_ROT) * 2/3)
+# Create training set: training_set
+training_set <- data1_ROT[index_train, ]
+# Create test set: test_set
+index_valid <- setdiff(rownames(data1_ROT), 
+                       index_train)
+test_set <- data1_ROT[index_valid, ]
+```
+
+II. Logistic Regression
+```{r}
+data1_ROT$loan_status <- as.factor(data1_ROT$loan_status)
+str(data1_ROT)
+```
+
+Use function `glm()` to construct a logistic regression model called `log_model_cat` with the categorical variable `int_cat`.
+as the only predictor.
+```{r}
+# Build a glm model with variable int_cat as a predictor
+log_model_cat <- glm(formula = loan_status ~ int_cat, family = "binomial",
+                     data = training_set)
+# Print the parameter estimates 
+log_model_cat
+```
+
+```{r}
+# Look at the different categories in ir_cat using table()
+table(data1_ROT$int_cat)
+```
+
+```{r}
+#for instance, in comparison of 8-11% with the interest rates between 0% to 8%, the odds in favor of default change by a multiple of 
+exp(0.5009)
+```
+
+Build the logistic regression model to predict `loan_status()` with all variables
+if not use `+` the system will understand as the rest of varaibles remain constant
+```{r}
+log_model_full <- glm(loan_status ~ . , family = "binomial", data = training_set)
+
+# Obtain significance levels using summary()
+summary(log_model_multi)
+```
+
+Deviance is measure of goodness of fit, the higher, the worse model turns out
+The NULL deviance is how well the reponse variable is predicted by model including only the intercept(grand mean).
+Residual deviance includes independent vaariables. As you can see, an addition of 20 DOF resulting in a lowering of deviance by 584.
+```{r}
+1-pchisq(12496,18452)
+```
+
+Prediction the value representing the probability of defaulting using logistic model built on the previous step
+```{r}
+predictions_all_full <- predict(log_model_full, newdata = test_set, type = "response")
+# Look at the range of the object "predictions_all_small"
+range(predictions_all_full)
+```
+
+Evaluating the logistic regression model on probability of defaulting with an example cut off of 0.15
+The prediction reference is the columns, while the row axis is the actual default records from `test_set`
+```{r}
+# Make a binary predictions-vector using a cut-off of 15%
+pred_cutoff_15 <- ifelse(predictions_all_full > 0.15, 1, 0)
+# Construct a confusion matrix
+table(test_set$loan_status, pred_cutoff_15)
+```
+
+Accurcy measures how correct the model identifies and exludes a given condition.
+Sensibility measures how good the model is at detecting a true positive
+Specificity measures how likely the trye negative are ruled out
+
+Create link functions
+```{r}
+# Fit the logit, probit and cloglog-link logistic regression models
+log_model_logit <- glm(loan_status ~ age + emp_cat + int_cat + loan_amnt,
+                       family = binomial(link = logit), data = training_set)
+log_model_probit <- glm(loan_status ~ age + emp_cat + int_cat + loan_amnt,
+                        family =  binomial(link = probit), data = training_set)
+log_model_cloglog <- glm(loan_status ~ age + emp_cat + int_cat + loan_amnt,
+                         family = binomial(link = cloglog), data = training_set)
+
+# Make predictions for all models using the test set
+predictions_logit <- predict(log_model_logit, newdata = test_set, type = "response")
+predictions_probit <- predict(log_model_probit, newdata = test_set, type = "response")
+predictions_cloglog <- predict(log_model_cloglog, newdata = test_set, type = "response")
+```
+
+III. Decision Tree 
+
+Computing the gain for a tree. use Gini-measure to create the perfect split for the a tree
+
+Building decision trees using the `rpart` package. The credit risk dataset is frequently unbalanced
+with it nature of very low percent of default record. Fortunately, we have 3 techniques to overcome unbalance.
+1. Undersampling or oversampling -> Accuracy issue will disappear, but on only apply on training set
+2. Changing the prior probabilities of default, to make it bigger
+3. Including a loss matrix
+
+Now we undersample the trainning set
+```{r}
+library(ROSE)
+undersampled_training_set <- ovun.sample(loan_status ~ ., data = training_set, method = "under")$data
+table(undersampled_training_set$loan_status)
+```
+
+```{r}
+# Load package rpart in your workspace.
+library(rpart)
+
+# The decision tree is constructed using the undersampled training set. Include `rpart.control` to relax the complexity parameter to 0.001.
+tree_undersample <- rpart(loan_status ~ ., method = "class",
+                          data =  undersampled_training_set,
+                          control = rpart.control(cp = 0.001))
+
+# Plot the decision tree
+plot(tree_undersample, uniform = TRUE)
+
+# Add labels to the decision tree
+text(tree_undersample)
+```
+Changing the prior probabilities
+This is an indirect way of adjusting the importance of misclassfications for each class.
+Changing the proportion of non-defaults to 0.7, and defaults to 0.3
+```{r}
+library(rpart)
+# Change the code below such that a tree is constructed with adjusted prior probabilities.
+tree_prior <- rpart(loan_status ~ ., method = "class",
+                    data = training_set, parms = list(prior = c(0.7, 0.3)),
+                    control = rpart.control(cp = 0.001))
+
+# Plot the decision tree
+plot(tree_prior, uniform = TRUE)
+
+# Add labels to the decision tree
+text(tree_prior)
+```
+
+Thirdly, include a loss matrix, changing the relative importance of misclassifying a default as non-default versus a non-default as a non-default.
+```{r}
+# a decision tree is constructed using a loss matrix penalizing 10 times more heavily for misclassified defaults.
+tree_loss_matrix  <- rpart(loan_status ~ ., method = "class", data = training_set,
+                           parms = list(loss = matrix(c(0, 10, 1, 0), ncol = 2)),
+                           control = rpart.control(cp = 0.001))
+
+# Plot the decision tree
+plot(tree_loss_matrix, uniform = TRUE)
+
+# Add labels to the decision tree
+text(tree_loss_matrix)
+```
+
+Pruning the decision tree  is necessary to avoid overfitting. There were some big trees in the previous exercises and now you will put what you have learned into practice, and prune the previously constructed tree with the changed prior probabilities.
+
+**Pruning the decision tree with changed prior probaiblities**
+```{r}
+library(rpart.plot)
+# Plot the cross-validated error rate as a function of the complexity parameter
+plotcp(tree_prior)
+# Use printcp() to identify for which complexity parameter the cross-validated error rate is minimized
+printcp(tree_prior)
+# Create an index for of the row with the minimum `xerror`
+index <- which.min(tree_prior$cptable[, "xerror"])
+# Create tree_min
+tree_min <- tree_prior$cptable[index, "CP"]
+#  Prune the tree using tree_min
+ptree_prior <- prune(tree_prior, cp = tree_min)
+# Use prp() to plot the pruned tree
+prp(ptree_prior)
+```
+
+**Pruning the decision tree has been undersampled**
+```{r}
+plotcp(tree_undersample)
+printcp(tree_undersample)
+index <- which.min(tree_undersample$cptable[,"xerror"])
+undersample_min <- tree_undersample$cptable[index, "CP"]
+ptree_undersample <- prune(tree_undersample, cp = undersample_min)
+prp(ptree_undersample)
+```
+
+**Pruning the decision tree built using the loss matrix in order to penalize misclassified defaults more than miisclassified non-defaults**
+```{r}
+# Plot the cross-validated error rate as a function of the complexity parameter
+plotcp(tree_loss_matrix)
+# Prune the tree using cp = 0.0012788
+ptree_loss_matrix <- prune(tree_loss_matrix, cp = 0.0012788)
+# Use prp() and argument extra = 1 to plot the pruned tree
+prp(ptree_loss_matrix, extra = 1)
+```
+
+Confusion matrices and accuracy of our final trees
+```{r}
+# Make predictions for each of the pruned trees using the test set.
+pred_undersample <- predict(ptree_undersample, newdata = test_set,  type = "class")
+pred_prior <- predict(ptree_prior, newdata = test_set, type = "class")
+pred_loss_matrix <- predict(ptree_loss_matrix, newdata = test_set, type = "class")
+
+# Construct confusion matrices using the predictions.
+confmat_undersample <- table(test_set$loan_status, pred_undersample)
+confmat_prior <- table(test_set$loan_status, pred_prior)
+confmat_loss_matrix <- table(test_set$loan_status, pred_loss_matrix)
+
+# Compute the accuracies
+acc_undersample <- sum(diag(confmat_undersample)) / nrow(test_set)
+acc_prior <- sum(diag(confmat_prior)) / nrow(test_set)
+acc_loss_matrix <- sum(diag(confmat_loss_matrix)) / nrow(test_set)
+
+acc_undersample
+acc_prior
+acc_loss_matrix
+```
+
+IV. Evaluating a credit risk model
+Finding the right cut-off: The strategy curve
+
+1. Computing a bad rate given a fixed acceptance rate
+`ptree_prior`
+```{r}
+# Make predictions for the probability of default using the pruned tree and the test set.
+prob_default_prior <- predict(ptree_prior, newdata = test_set)[ ,2]
+
+# Obtain the cutoff for acceptance rate 80%
+cutoff_prior <- quantile(prob_default_prior, 0.8)
+  
+# Obtain the binary predictions.
+bin_pred_prior_80 <- ifelse(prob_default_prior > cutoff_prior, 1, 0)
+
+# Obtain the actual default status for the accepted loans
+accepted_status_prior_80 <- test_set$loan_status[bin_pred_prior_80 == 0]
+
+# Obtain the bad rate for the accepted loans
+sum(accepted_status_prior_80) / length(accepted_status_prior_80)
+```
+
+2. The strategy table and strategy curve
+2.1 The ROC for logistic regression
+
+```{r}
+# Load the pROC-package
+library(pROC)
+
+# Construct the objects containing ROC-information
+ROC_logit <- roc(test_set$loan_status, predictions_logit)
+ROC_probit <- roc(test_set$loan_status, predictions_probit)
+ROC_cloglog <- roc(test_set$loan_status, predictions_cloglog)
+ROC_all_full <- roc(test_set$loan_status, predictions_all_full)
+
+# Draw all ROCs on one plot
+plot(ROC_logit)
+lines(ROC_probit, col = "blue")
+lines(ROC_cloglog, col = "red")
+lines(ROC_all_full, col = "green")
+
+# Compute the AUCs
+auc(ROC_logit)
+auc(ROC_probit)
+auc(ROC_cloglog)
+auc(ROC_all_full)
+```
+The area under the curve of all full variables version of logistic regression is lowest. It is the most prerrable one so far.
+
+2.2 The ROC for Decision Tree
+```{r}
+pred_undersample <- as.double(pred_undersample)
+pred_prior <- as.double(pred_prior)
+pred_loss_matrix <- as.double(pred_loss_matrix)
+# Construct the objects containing ROC-information
+ROC_undersample <- roc(test_set$loan_status, pred_undersample)
+ROC_prior <- roc(test_set$loan_status, pred_prior)
+ROC_loss_matrix <- roc(test_set$loan_status, pred_loss_matrix)
+
+# Draw the ROC-curves in one plot
+plot(ROC_undersample)
+lines(ROC_prior, col="blue")
+lines(ROC_loss_matrix, col="red")
+
+# Compute the AUCs
+auc(ROC_undersample)
+auc(ROC_prior)
+auc(ROC_loss_matrix)
+```
+The area under the curve of the changed prior probabilities based decision tree is lowest. It is the most prerrable one so far.
+
+2.3 The second round of pruning based on AUC
+The vital necessary of this step is to detect which variables are important for predicting default.
+We could also you the p-value from the prediction model to determine the importance of variables.
+
+```{r}
+AUC_model_full <- auc(test_set$loan_status, predictions_all_full)
+AUC_model_full
+```
+
+```{r}
+log_6_remove_amnt <- glm(loan_status ~ grade + home_ownership + annual_inc + emp_cat + age, 
+                         family = binomial, data = training_set) 
+log_6_remove_grade <- glm(loan_status ~ loan_amnt +home_ownership + annual_inc + emp_cat +age, 
+                          family = binomial, data = training_set)
+log_6_remove_home_ownership <- glm(loan_status ~ loan_amnt + grade + annual_inc + emp_cat + age, 
+                          family = binomial, data = training_set)
+log_6_remove_inc <- glm(loan_status ~ loan_amnt + grade + home_ownership + age + emp_cat , 
+                        family = binomial, data = training_set)
+log_6_remove_age <- glm(loan_status ~ loan_amnt + grade + home_ownership + annual_inc + emp_cat , 
+                        family = binomial, data = training_set)
+log_6_remove_emp <- glm(loan_status ~ loan_amnt + grade + home_ownership + annual_inc + age, 
+                        family = binomial, data = training_set)
+
+# Make PD-predictions for each of the models
+pred_6_remove_amnt <- predict(log_6_remove_amnt, newdata = test_set, type = "response")
+pred_6_remove_grade <- predict(log_6_remove_grade, newdata = test_set, type = "response")
+pred_6_remove_home_ownership <- predict(log_6_remove_home_ownership, newdata = test_set, type = "response")
+pred_6_remove_inc <- predict(log_6_remove_inc, newdata = test_set, type = "response")
+pred_6_remove_age <- predict(log_6_remove_age, newdata = test_set, type = "response")
+pred_6_remove_emp <- predict(log_6_remove_emp, newdata = test_set, type = "response")
+
+# Compute the AUCs
+auc(test_set$loan_status, pred_6_remove_amnt)
+auc(test_set$loan_status, pred_6_remove_grade)
+auc(test_set$loan_status, pred_6_remove_home_ownership)
+auc(test_set$loan_status, pred_6_remove_inc)
+auc(test_set$loan_status, pred_6_remove_age)
+auc(test_set$loan_status, pred_6_remove_emp)
+```
+None of these element removed model have a bigger value than the full model. The highest logistic regression AUC is 0.6632 is also higher than the highest AUC of undersampled decision tree which is 0.6141. 
+
+**As a result, the full version of logistic regression is the one we should be using.**
+
