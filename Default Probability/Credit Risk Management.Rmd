@@ -60,7 +60,7 @@ his_income <- hist(data1$annual_inc, breaks = n_breaks,
      xlab = "Annual Income")
 ```
 
-We could observe an outlier with 6 million dollars income. Could use the rules like: `Q1-1.5*IQR` or `Q3=1.5*IQR`
+We could observe an outlier with 6 million dollars income. Could use the rules like: `Q1-1.5*IQR` or `Q3+1.5*IQR`
 ```{r}
 plot(data1$annual_inc, ylab = "Annual Income")
 ```
@@ -127,7 +127,7 @@ I.b. Missing data and coarse classification
 summary(data1_ROT)
 ```
 
-Keeping misisng data for `emp_length` and `int_rate` we are goona use coarse classification for this variables.
+Keeping misisng data for `emp_length` and `int_rate` we are gonna use coarse classification for this variables.
 Since the missing input is important for this type of variable. Coarse classification requires us to bin our responses into groups that contain ranges of values. We can use this binning technique to place all NAs in their own bin.
 ```{r}
 # Make the necessary replacements in the coarse classification example below 
@@ -163,6 +163,7 @@ data1_ROT$int_rate <- NULL
 plot(data1_ROT$int_cat)
 ```
 
+Create `training_set` and `test_set`
 ```{r}
 # Set seed of 567
 set.seed(567)
@@ -207,14 +208,14 @@ Build the logistic regression model to predict `loan_status()` with all variable
 if not use `+` the system will understand as the rest of varaibles remain constant
 ```{r}
 log_model_full <- glm(loan_status ~ . , family = "binomial", data = training_set)
-
+log_model_full
 # Obtain significance levels using summary()
-summary(log_model_multi)
+summary(log_model_full)
 ```
 
 Deviance is measure of goodness of fit, the higher, the worse model turns out
-The NULL deviance is how well the reponse variable is predicted by model including only the intercept(grand mean).
-Residual deviance includes independent vaariables. As you can see, an addition of 20 DOF resulting in a lowering of deviance by 584.
+The NULL deviance is how well the response variable is predicted by model including only the intercept(grand mean).
+Residual deviance includes independent variables. As you can see, an addition of 20 DOF resulting in a lowering of deviance by 584.
 ```{r}
 1-pchisq(12496,18452)
 ```
@@ -222,22 +223,40 @@ Residual deviance includes independent vaariables. As you can see, an addition o
 Prediction the value representing the probability of defaulting using logistic model built on the previous step
 ```{r}
 predictions_all_full <- predict(log_model_full, newdata = test_set, type = "response")
+summary(predictions_all_full)
 # Look at the range of the object "predictions_all_small"
 range(predictions_all_full)
 ```
 
-Evaluating the logistic regression model on probability of defaulting with an example cut off of 0.15
+Evaluating the logistic regression model on probability of defaulting with an example cut off of 0.116
 The prediction reference is the columns, while the row axis is the actual default records from `test_set`
 ```{r}
+ROC_threshold <- function(truth, prediction) {
+        ROC <- roc(truth, prediction)
+        ROC_table <- cbind(ROC$thresholds, ROC$sensitivities, ROC$specificities)
+        ROC_table[which.max(ROC_table[, 2] + ROC_table[, 3]), ]        
+}
+
+ROC_threshold(test_set$loan_status, predictions_all_full)
+```
+```{r}
 # Make a binary predictions-vector using a cut-off of 15%
-pred_cutoff_15 <- ifelse(predictions_all_full > 0.15, 1, 0)
+pred_cutoff_18 <- ifelse(predictions_all_full > 0.18, 1, 0)
 # Construct a confusion matrix
-table(test_set$loan_status, pred_cutoff_15)
+table(test_set$loan_status, pred_cutoff_11)
 ```
 
-Accurcy measures how correct the model identifies and exludes a given condition.
+```{r}
+library(caret)
+pred_cutoff_18_cfs <- as.factor(pred_cutoff_18)
+loan_status_cfs <- as.factor(test_set$loan_status)
+cfs_result <- confusionMatrix(pred_cutoff_18_cfs, loan_status_cfs)
+cfs_result
+```
+
+Accuracy measures how correct the model identifies and excludes a given condition.
 Sensibility measures how good the model is at detecting a true positive
-Specificity measures how likely the trye negative are ruled out
+Specificity measures how likely the true negative are ruled out
 
 Create link functions
 ```{r}
@@ -292,6 +311,7 @@ This is an indirect way of adjusting the importance of misclassfications for eac
 Changing the proportion of non-defaults to 0.7, and defaults to 0.3
 ```{r}
 library(rpart)
+library(DescTools)
 # Change the code below such that a tree is constructed with adjusted prior probabilities.
 tree_prior <- rpart(loan_status ~ ., method = "class",
                     data = training_set, parms = list(prior = c(0.7, 0.3)),
@@ -389,7 +409,7 @@ Finding the right cut-off: The strategy curve
 prob_default_prior <- predict(ptree_prior, newdata = test_set)[ ,2]
 
 # Obtain the cutoff for acceptance rate 80%
-cutoff_prior <- quantile(prob_default_prior, 0.8)
+cutoff_prior <- quantile(prob_default_prior, 0.60)
   
 # Obtain the binary predictions.
 bin_pred_prior_80 <- ifelse(prob_default_prior > cutoff_prior, 1, 0)
@@ -415,7 +435,7 @@ ROC_cloglog <- roc(test_set$loan_status, predictions_cloglog)
 ROC_all_full <- roc(test_set$loan_status, predictions_all_full)
 
 # Draw all ROCs on one plot
-plot(ROC_logit)
+plot(ROC_logit,legacy = TRUE)
 lines(ROC_probit, col = "blue")
 lines(ROC_cloglog, col = "red")
 lines(ROC_all_full, col = "green")
@@ -423,10 +443,10 @@ lines(ROC_all_full, col = "green")
 # Compute the AUCs
 auc(ROC_logit)
 auc(ROC_probit)
-auc(ROC_cloglog)
+auc(ROC_cloglog) # in case of extreme inbalance, the cloglog should be the best one
 auc(ROC_all_full)
 ```
-The area under the curve of all full variables version of logistic regression is lowest. It is the most prerrable one so far.
+The area under the curve of all full variables version of logistic regression is highest. It is the most preferable one so far.
 
 2.2 The ROC for Decision Tree
 ```{r}
@@ -439,7 +459,7 @@ ROC_prior <- roc(test_set$loan_status, pred_prior)
 ROC_loss_matrix <- roc(test_set$loan_status, pred_loss_matrix)
 
 # Draw the ROC-curves in one plot
-plot(ROC_undersample)
+plot(ROC_undersample, legacy = TRUE)
 lines(ROC_prior, col="blue")
 lines(ROC_loss_matrix, col="red")
 
@@ -448,7 +468,7 @@ auc(ROC_undersample)
 auc(ROC_prior)
 auc(ROC_loss_matrix)
 ```
-The area under the curve of the changed prior probabilities based decision tree is lowest. It is the most prerrable one so far.
+The area under the curve of the undersampled based decision tree is lowest. It is the most preferable one so far.
 
 2.3 The second round of pruning based on AUC
 The vital necessary of this step is to detect which variables are important for predicting default.
