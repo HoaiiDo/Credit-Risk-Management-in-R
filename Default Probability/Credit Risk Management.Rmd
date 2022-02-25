@@ -1,7 +1,7 @@
 ---
 title: "Credit Risk Management_coarsing_int_rate"
 author: "Hoai Do"
-date: "2/11/2022"
+date: "12/28/2022"
 output: html_document
 ---
 
@@ -511,5 +511,5 @@ auc(test_set$loan_status, pred_6_remove_emp)
 ```
 None of these element removed model have a bigger value than the full model. The highest logistic regression AUC is 0.6632 is also higher than the highest AUC of undersampled decision tree which is 0.6141. 
 
-**As a result, the full version of logistic regression is the one we should be using.**
+**As a result, the full version of logistic regression is the one we should be using is the full model of logistic regression.**
 
